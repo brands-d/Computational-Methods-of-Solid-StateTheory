@@ -55,6 +55,6 @@ ax.plot(x, result[-1], label=fr'Leap-Frog', linestyle='--',
 
 ax.set(xlabel=r'Position', ylabel=fr'Intensity',
        title=r'Different Schemes: $\Delta t = {0:.0f}$; $r = {1:.3f}$'.format(t_end, c * dt / dx))
-ax.grid()
+ax.Grid()
 ax.legend()
 plt.show()

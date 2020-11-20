@@ -1,34 +1,33 @@
 import numpy as np
-from library import grid, dirac_solver
+import matplotlib.pyplot as plt
+import scipy.stats as stats
+from library import Grid, dirac_solver, abs_square_spinor
 
 np.set_printoptions(precision=3)
 
 # Settings
-L = 25
-delta = 0.25, 1, 1
-m, V = 10,10
-t_end = 50
+L = 10
+delta = 1 / np.sqrt(2), 1, 1
+m, V = 0, 0
+t_end = 1000
 
 # Initial condition
-u_0 = np.zeros(L**2, dtype=np.complex_)
-u_0[5] = 1
-u_1 = np.zeros((L - 1)**2, dtype=np.complex_)
-u_1[4] = 1
-u = grid(u_0, u_1, [(L, L), (L - 1, L - 1)])
+# Generate Gaussian Input for the real part of the u spinor component
+x, y = np.meshgrid(np.linspace(-1, 1, L), np.linspace(-1, 1, L))
+d = np.sqrt(x ** 2 + y ** 2)
+mu, sigma = 0, 0.05
+u_0 = np.exp(-((d - mu) ** 2 / (2.0 * sigma ** 2)), dtype=np.complex_)
+u_1 = np.zeros((L, L), dtype=np.complex_)
+u = Grid([u_0, u_1], L, type_='u')
 
-v_0 = np.zeros(L * (L - 1), dtype=np.complex_)
-v_0[5] = 1
-v_1 = np.zeros(L * (L - 1), dtype=np.complex_)
-v_1[4] = 0
-v = grid(v_0, v_1, [(L, L - 1), (L - 1, L)])
+v_0 = np.zeros((L, L), dtype=np.complex_)
+v_1 = np.zeros((L, L), dtype=np.complex_)
+v = Grid([v_0, v_1], L, type_='v')
 
-# print('Initial Condition:')
-# print('u:\n', u)
-# print('v:\n', v)
-
+fig, axs = plt.subplots(1, 2)
+axs[0].imshow(abs_square_spinor(u, v))
 # Calculation
 u, v = dirac_solver(u, v, m, V, delta, t_end)
 
-# print('Result:')
-# print('u:\n', u)
-# print('v:\n', v)
+axs[1].imshow(abs_square_spinor(u, v))
+plt.show()

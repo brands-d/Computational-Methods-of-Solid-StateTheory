@@ -1,17 +1,13 @@
-import enum
 import time
+import copy
 import numpy as np
+from scipy.interpolate import interpolate
 
 hc = 1 / 2
 
-global is_timed
-is_timed = False
-
 
 def timeit(func):
-
     def wrapper(*args, **kwargs):
-
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
@@ -24,12 +20,17 @@ def timeit(func):
     return wrapper
 
 
-class grid():
+class Grid:
 
-    def __init__(self, x_0, x_1, shapes):
+    def __init__(self, x, L, type_='u'):
 
-        self.x = [x_0, x_1]
-        self.shapes = shapes
+        if type_ == 'u':
+            self.x = [x[0], Grid.grid_transform(x[1], (L - 1, L - 1), L)]
+        else:
+            self.x = [Grid.grid_transform(x[0], (L - 1, L), L),
+                      Grid.grid_transform(x[1], (L, L - 1), L)]
+
+        self.L = L
 
     def __iter__(self):
         self.i = 0
@@ -37,7 +38,7 @@ class grid():
 
     def __next__(self):
 
-        if self.i < len(self.x[0]):
+        if self.i < len(self.x[0].flatten()):
             i = self.i
             self.i += 1
 
@@ -58,28 +59,72 @@ class grid():
 
     def __str__(self):
 
-        return str(self.x[0].reshape(self.shapes[0])) + \
-            '\n\n' + str(self.x[1].reshape(self.shapes[1]))
+        return str(self.x[0]) + '\n\n' + str(self.x[1])
+
+    def __abs__(self):
+
+        # Regrid them to the regular grid and sum them
+        L = self.L
+        x = np.sum([Grid.grid_transform(self.x[i], (L, L), L) for i in [0, 1]],
+                   axis=0)
+
+        return (x * np.conj(x)).real.astype(np.float)
+
+    @classmethod
+    def grid_transform(cls, u, new_shape, L):
+
+        axis_old = [None, None]
+        axis_new = [None, None]
+        for i in [0, 1]:
+            axis_old[i] = Grid.grid_to_axis(u.shape[i], L)
+            if u.shape[i] == new_shape[i]:
+                axis_new[i] = axis_old[i]
+
+            else:
+                axis_new[i] = Grid.grid_to_axis(new_shape[i], L)
+
+        real = interpolate.interp2d(axis_old[1], axis_old[0], np.real(u),
+                                    bounds_error=False)(*axis_new)
+        imag = interpolate.interp2d(axis_old[1], axis_old[0], np.imag(u),
+                                    bounds_error=False)(*axis_new)
+
+        return real + 1j * imag.astype(np.complex_)
+
+    @classmethod
+    def grid_to_axis(cls, grid_points, L):
+        half_step = 1 / (L - 1)
+        diff = (L - grid_points) * half_step
+        axis = np.linspace(-1 + diff, 1 - diff, grid_points, endpoint=True,
+                           dtype=np.float)
+
+        return axis
 
     def get(self, index):
 
-        return self.x[index[0]][index[1]]
+        x = self.x[index[0]]
+        idx = np.unravel_index(index[1], x.shape)
+        value = x[idx]
+
+        return value
 
     def set(self, index, value):
 
-        self.x[index[0]][index[1]] = value
+        x = self.x[index[0]]
+        idx = np.unravel_index(index[1], x.shape)
+
+        x[idx] = value
 
 
 @timeit
 def dirac_solver(u, v, m, V, delta, t_end):
-
     dt, dx, dy = delta
-    L = int(np.sqrt(len(u[0])))
+    L = len(u[0])
     time = np.arange(0, t_end, dt)
-    f0 = (1 / dt - (m + V) / (2 * 1j * hc))**(-1)
-    f1 = 1 / dt + (m + V) / (2 * 1j * hc)
-    f2 = (1 / dt - (V - m) / (2 * 1j * hc))**(-1)
-    f3 = 1 / dt + (V - m) / (2 * 1j * hc)
+    f = 2 * 1j * hc
+    f0 = (1 / dt - (m + V) / f) ** (-1)
+    f1 = 1 / dt + (m + V) / f
+    f2 = (1 / dt - (V - m) / f) ** (-1)
+    f3 = 1 / dt + (V - m) / f
 
     for _ in time:
 
@@ -87,6 +132,11 @@ def dirac_solver(u, v, m, V, delta, t_end):
         for i in u:
             n = get_neighbour(i, 'u', L)
             if n:
+                a = u.get(i)
+                a = v.get(n[0])
+                a = v.get(n[1])
+                a = v.get(n[3])
+                a = v.get(n[2])
                 value = f0 * (f1 * u.get(i) - (v.get(n[0]) - v.get(n[1])) /
                               dy - 1j * (v.get(n[3]) - v.get(n[2])) / dx)
                 u.set(i, value)
@@ -95,14 +145,13 @@ def dirac_solver(u, v, m, V, delta, t_end):
             n = get_neighbour(i, 'v', L)
             if n:
                 value = f2 * (f3 * v.get(i) - (u.get(n[0]) - u.get(n[1])) /
-                              dy - 1j * (u.get(n[3]) - u.get(n[2])) / dx)
+                              dy + 1j * (u.get(n[3]) - u.get(n[2])) / dx)
                 v.set(i, value)
 
     return u, v
 
 
 def get_neighbour(index, grid, L):
-
     index, i = index
 
     if grid == 'u':
@@ -121,7 +170,7 @@ def get_neighbour(index, grid, L):
 
     elif grid == 'v':
         if index == 0:
-            if i < (L - 1) or i >= (L - 1)**2:
+            if i < (L - 1) or i >= (L - 1) ** 2:
                 # boundary point
                 return False
 
@@ -137,3 +186,9 @@ def get_neighbour(index, grid, L):
             else:
                 temp = i - int(i / L)
                 return [[0, i], [0, i + L], [1, temp - 1], [1, temp]]
+
+
+def abs_square_spinor(u, v):
+    abs_ = [abs(x) for x in [u, v]]
+
+    return np.sqrt(np.sum(abs_, axis=0))
