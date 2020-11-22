@@ -5,14 +5,14 @@ from library import Spinor, dirac_solver
 np.set_printoptions(precision=3)
 
 # Settings
-L = 50
+L = 100
 delta = 1 / np.sqrt(2), 1, 1
-m, V = 1, 10
-t_end = 100
+m, V = 10, 1
+t_end = 1000
 
 # Initial condition
 # Generate Gaussian Input for the real part of the u spinor component
-x, y = np.meshgrid(np.linspace(-1, 1, 2 * L), np.linspace(-1, 1, 2 * L - 1))
+x, y = np.meshgrid(np.linspace(-1, 1, L), np.linspace(-1, 1, L - 1))
 d = np.sqrt(x ** 2 + y ** 2)
 mu, sigma = 0, 0.25
 
@@ -22,8 +22,9 @@ s = Spinor(u, v, L)
 
 # print(abs(s))
 fig, axs = plt.subplots(1, 3)
-axs[0].imshow(abs((u + v).reshape(2 * L - 1, 2 * L)) ** 2)
+axs[0].imshow(abs((u + v).reshape(L - 1, L)) ** 2)
 axs[1].imshow(abs(s))
+
 # Calculation
 s = dirac_solver(s, m, V, delta, t_end)
 # print(abs(s))
