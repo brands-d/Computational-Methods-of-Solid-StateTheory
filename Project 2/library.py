@@ -73,47 +73,6 @@ class SpinorComponent:
         else:
             return False
 
-    @classmethod
-    def reg_to_staggered_index(cls, i, L):
-        row = int(i / L)
-        col = i - L * row
-        grid = 'u' if (row % 2 == 0) == (col % 2 == 0) else 'v'
-        idx = int(i / 2) if i % 2 == 0 else int((i - 1) / 2)
-        return grid, idx
-
-    @classmethod
-    def staggered_indicies(cls, L, type_):
-        num_points = L * (L - 1)
-        idx = []
-        # Indices of the u component grid points
-        for i in range(num_points):
-            grid, j = SpinorComponent.reg_to_staggered_index(i, L)
-            if grid == type_:
-                idx.append(j)
-
-        return idx
-
-    @classmethod
-    def split_reg(cls, x, L):
-        u = SpinorComponent.reg_to_staggered(x, L, 'u')
-        v = SpinorComponent.reg_to_staggered(x, L, 'v')
-        return u, v
-
-    @classmethod
-    def reg_to_staggered(cls, x, L, type_):
-        idx = SpinorComponent.staggered_indicies(L, type_)
-        return x.flatten()[idx]
-
-    @classmethod
-    def staggered_to_reg(self, x, L):
-        grid = np.zeros(L * (L - 1), dtype=np.complex_)
-        u_idx = SpinorComponent.staggered_indicies(L, 'u')
-        v_idx = SpinorComponent.staggered_indicies(L, 'v')
-        grid[u_idx] = x['u']
-        grid[v_idx] = x['v']
-
-        return grid.reshape(L - 1, L)
-
 
 class Spinor:
 
