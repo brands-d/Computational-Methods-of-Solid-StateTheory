@@ -7,8 +7,8 @@ np.set_printoptions(precision=3)
 # Settings
 L = 100
 delta = 1 / np.sqrt(2), 1, 1
-m, V = 10, 1
-t_end = 1000
+m, V = 1, 100
+t_end = 700
 
 # Initial condition
 # Generate Gaussian Input for the real part of the u spinor component
