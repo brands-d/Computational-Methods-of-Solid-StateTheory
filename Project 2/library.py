@@ -1,9 +1,8 @@
 import time
-import copy
 import numpy as np
 from scipy.interpolate import interpolate
 
-hc = 1 / 2
+ihc = 1j
 
 
 def timeit(func):
@@ -11,184 +10,208 @@ def timeit(func):
         start_time = time.time()
         result = func(*args, **kwargs)
         end_time = time.time()
-
         print('Execution Time ({0}): {1:.5f} seconds'.format(
             func.__name__, end_time - start_time))
-
         return result
 
     return wrapper
 
 
-class Grid:
+def complex_interp(x, n):
+    n_diag, n_para = n
+    real_diag = np.real(x[n_diag])
+    real_para = np.real(x[n_para])
+    imag_diag = np.imag(x[n_diag])
+    imag_para = np.imag(x[n_para])
 
-    def __init__(self, x, L, type_='u'):
+    v_real = (np.mean(real_diag) + np.sqrt(2) * np.mean(real_para)) / 2
+    v_imag = (np.mean(imag_diag) + np.sqrt(2) * np.mean(imag_para)) / 2
+    return v_real + 1j * v_imag
 
-        if type_ == 'u':
-            self.x = [x[0], Grid.grid_transform(x[1], (L - 1, L - 1), L)]
-        else:
-            self.x = [Grid.grid_transform(x[0], (L - 1, L), L),
-                      Grid.grid_transform(x[1], (L, L - 1), L)]
 
+class SpinorComponent:
+
+    def __init__(self, x, L, type_):
         self.L = L
+        self.type_ = type_
 
-    def __iter__(self):
-        self.i = 0
-        return self
-
-    def __next__(self):
-
-        if self.i < len(self.x[0].flatten()):
-            i = self.i
-            self.i += 1
-
-            return [0, i]
-
-        elif self.i < (len(self.x[0]) + len(self.x[1])):
-            i = self.i
-            self.i += 1
-
-            return [1, i - len(self.x[0])]
-
-        else:
-            raise StopIteration
+        self.x = SpinorComponent.reg_to_staggered(x, L, type_)
 
     def __getitem__(self, i):
+        if isinstance(i, int):
+            return np.nan if i is np.nan else self.x[i]
 
-        return self.x[i]
+        else:
+            value = np.zeros(len(i), dtype=np.complex_) * np.nan
+            mask = np.invert(np.isnan(i))
+            value[mask] = self.x[i[mask].astype(int)]
+            return value
 
-    def __str__(self):
-
-        return str(self.x[0]) + '\n\n' + str(self.x[1])
+    def __setitem__(self, i, value):
+        self.x[i] = value
 
     def __abs__(self):
+        x = SpinorComponent.staggered_to_reg(self.x, self.L, self.type_)
+        return np.real(x * np.conjugate(x))
 
-        # Regrid them to the regular grid and sum them
-        L = self.L
-        x = np.sum([Grid.grid_transform(self.x[i], (L, L), L) for i in [0, 1]],
-                   axis=0)
+    def __rmul__(self, other):
+        self.x *= other
+        return self
 
-        return (x * np.conj(x)).real.astype(np.float)
+    def __add__(self, other):
+        mask = np.invert(np.isnan(other))
+        self.x[mask] += other[mask]
+        return self
+
+    def __sub__(self, other):
+        self.__add__(-other)
+        return self
+
+    def __repr__(self):
+        return self.x.__repr__()
 
     @classmethod
-    def grid_transform(cls, u, new_shape, L):
+    def get_other_grid_neighbour(cls, i, L, type_):
 
-        axis_old = [None, None]
-        axis_new = [None, None]
-        for i in [0, 1]:
-            axis_old[i] = Grid.grid_to_axis(u.shape[i], L)
-            if u.shape[i] == new_shape[i]:
-                axis_new[i] = axis_old[i]
+        # k is aux index. Is 1 for even layer on staggered grid, else 0.
+        k = int(i / L) % 2
+        if SpinorComponent.is_boundary_point(i, L, type_):
+            n = [np.nan, np.nan, np.nan, np.nan]
+        elif type_ == 'u':
+            n = [i - L, i + L, i + k, i - (1 - k)]
+        else:
+            n = [i - L, i + L, i - k + 1, i - k]
 
+        # Upper, lower, right-side, left-side neighbour index
+        return n
+
+    def get_same_grid_neighbour(i, L, type_):
+        if type_ == 'u':
+            is_left = i % (2 * L) == 0
+            is_almost_left = i % (2 * L) == 0
+            is_right = i % (2 * L) == 2 * L - 1
+            is_almost_right = i % L == 2
+        else:
+            is_left = (i + L) % (2 * L) == 0
+            is_almost_left = i % L == 0
+            is_right = (i + L) % (2 * L) == 2 * L - 1
+            is_almost_right = i % (2 * L) == 2 * L - 1
+
+        if is_left or is_right or is_almost_left or is_almost_right:
+            if is_left or is_right:
+                n_diag = [i + L, i - L]
             else:
-                axis_new[i] = Grid.grid_to_axis(new_shape[i], L)
+                n_diag = [i + L, i + L - 1, i - L, i - L - 1]
 
-        real = interpolate.interp2d(axis_old[1], axis_old[0], np.real(u),
-                                    bounds_error=False)(*axis_new)
-        imag = interpolate.interp2d(axis_old[1], axis_old[0], np.imag(u),
-                                    bounds_error=False)(*axis_new)
+            if is_left:
+                n_para = [i + 1, i + 2 * L, i - 2 * L]
+            elif is_right:
+                n_para = [i + 2 * L, i - 1, i - 2 * L]
+            elif is_almost_left:
+                n_para = [i + 2 * L, i - 1, i - 2 * L]
+            else:
+                n_para = [i + 2 * L, i - 1, i - 2 * L]
+        else:
+            n_diag = [i + L, i + L - 1, i - L, i - L - 1]
+            n_para = [i + 1, i + 2 * L, i - 1, i - 2 * L]
 
-        return real + 1j * imag.astype(np.complex_)
+        n_diag = np.array(n_diag)
+        n_para = np.array(n_para)
+        n_diag = n_diag[np.logical_and(n_diag >= 0, n_diag < 2 * L ** 2 - L)]
+        n_para = n_para[np.logical_and(n_para >= 0, n_para < 2 * L ** 2 - L)]
+
+        return [n_diag, n_para]
 
     @classmethod
-    def grid_to_axis(cls, grid_points, L):
-        half_step = 1 / (L - 1)
-        diff = (L - grid_points) * half_step
-        axis = np.linspace(-1 + diff, 1 - diff, grid_points, endpoint=True,
-                           dtype=np.float)
+    def is_boundary_point(cls, i, L, type_):
 
-        return axis
+        # Tests for upper or lower lattice boundary
+        if i < L or i >= 2 * (L ** 2 - L):
+            return True
+        elif type_ == 'u' and i % (2 * L) in [0, 2 * L - 1]:
+            return True
+        elif type_ == 'v' and (i + L) % (2 * L) in [0, 2 * L - 1]:
+            return True
 
-    def get(self, index):
+    @classmethod
+    def staggered_index(cls, L, type_):
+        num_points = 2 * L * (2 * L - 1)
+        idx = list(range(num_points))
+        # Indices of the u component grid points
+        u_idx = [i if int(i / (2 * L)) % 2 == 0 else i + 1 for i in
+                 range(0, num_points, 2)]
 
-        x = self.x[index[0]]
-        idx = np.unravel_index(index[1], x.shape)
-        value = x[idx]
+        if type_ == 'u':
+            return u_idx
+        else:
+            return np.delete(idx, u_idx)
 
-        return value
+    @classmethod
+    def reg_to_staggered(cls, x, L, type_):
+        idx = SpinorComponent.staggered_index(L, type_)
+        return x.flatten()[idx]
 
-    def set(self, index, value):
+    @classmethod
+    def staggered_to_reg(self, x, L, type_):
+        grid = np.zeros(2 * L * (2 * L - 1), dtype=np.complex_)
+        exist_idx = SpinorComponent.staggered_index(L, type_)
+        missing_idx = SpinorComponent.staggered_index(L, 'u' if type_ == 'v'
+        else 'v')
 
-        x = self.x[index[0]]
-        idx = np.unravel_index(index[1], x.shape)
+        grid[exist_idx] = x
+        for i, j in zip(missing_idx, range(2 * L ** 2 - L)):
+            n = SpinorComponent.get_same_grid_neighbour(j, L, type_)
+            grid[i] = complex_interp(x, n)
 
-        x[idx] = value
+        return grid.reshape(2 * L - 1, 2 * L)
+
+    def get_all_other_grid_neighbours(self):
+        n = [SpinorComponent.get_other_grid_neighbour(i, self.L, self.type_)
+             for i in
+             range(len(self.x))]
+        return np.array(n)
+
+
+class Spinor:
+
+    def __init__(self, u, v, L):
+        self.u = SpinorComponent(u, L, type_='u')
+        self.v = SpinorComponent(v, L, type_='v')
+
+    def __abs__(self):
+        return abs(self.u) + abs(self.v)
+
+    def __iter__(self):
+        return iter((self.u, self.v))
+
+    def __repr__(self):
+        return 'u:\n' + self.u.__repr__() + '\nv:\n' + self.v.__repr__()
 
 
 @timeit
-def dirac_solver(u, v, m, V, delta, t_end):
+def dirac_solver(spinor, m, V, delta, t_end):
     dt, dx, dy = delta
-    L = len(u[0])
     time = np.arange(0, t_end, dt)
-    f = 2 * 1j * hc
-    f0 = (1 / dt - (m + V) / f) ** (-1)
-    f1 = 1 / dt + (m + V) / f
-    f2 = (1 / dt - (V - m) / f) ** (-1)
-    f3 = 1 / dt + (V - m) / f
+    u, v = spinor
+    f = [(1 / dt - (m + V) / ihc) ** (-1), 1 / dt + (m + V) / ihc,
+         (1 / dt - (V - m) / ihc) ** (-1), 1 / dt + (V - m) / ihc]
+    n_u = u.get_all_other_grid_neighbours().T
+    n_v = v.get_all_other_grid_neighbours().T
+
+    def advance_u(u, v, n):
+        up_down = (v[n[0]] - v[n[1]]) / dy
+        right_left = (v[n[3]] - v[n[2]]) * 1j / dx
+        u = f[0] * (f[1] * u - up_down - right_left)
+        return u
+
+    def advance_v(u, v, n):
+        up_down = (u[n[0]] - u[n[1]]) / dy
+        right_left = (u[n[3]] - u[n[2]]) * 1j / dx
+        v = f[2] * (f[3] * v - up_down + right_left)
+        return v
 
     for _ in time:
+        advance_u(u, v, n_u)
+        advance_v(u, v, n_v)
 
-        # Advance points in u
-        for i in u:
-            n = get_neighbour(i, 'u', L)
-            if n:
-                a = u.get(i)
-                a = v.get(n[0])
-                a = v.get(n[1])
-                a = v.get(n[3])
-                a = v.get(n[2])
-                value = f0 * (f1 * u.get(i) - (v.get(n[0]) - v.get(n[1])) /
-                              dy - 1j * (v.get(n[3]) - v.get(n[2])) / dx)
-                u.set(i, value)
-
-        for i in v:
-            n = get_neighbour(i, 'v', L)
-            if n:
-                value = f2 * (f3 * v.get(i) - (u.get(n[0]) - u.get(n[1])) /
-                              dy + 1j * (u.get(n[3]) - u.get(n[2])) / dx)
-                v.set(i, value)
-
-    return u, v
-
-
-def get_neighbour(index, grid, L):
-    index, i = index
-
-    if grid == 'u':
-        if index == 0:
-            if i < L or i >= L * (L - 1) or i % L == 0 or i % L == L - 1:
-                # boundary point
-                return False
-
-            else:
-                temp = i - int(i / L)
-                return [[1, i - L], [1, i], [0, temp - 1], [0, temp]]
-
-        else:
-            temp = i + int(i / (L - 1))
-            return [[0, i], [0, i + L - 1], [1, temp], [1, temp + 1]]
-
-    elif grid == 'v':
-        if index == 0:
-            if i < (L - 1) or i >= (L - 1) ** 2:
-                # boundary point
-                return False
-
-            else:
-                temp = i + int(i / (L - 1))
-                return [[1, i - (L - 1)], [1, i], [0, temp], [0, temp + 1]]
-
-        else:
-            if i % L == 0 or i % L == L - 1:
-                # boundary point
-                return False
-
-            else:
-                temp = i - int(i / L)
-                return [[0, i], [0, i + L], [1, temp - 1], [1, temp]]
-
-
-def abs_square_spinor(u, v):
-    abs_ = [abs(x) for x in [u, v]]
-
-    return np.sqrt(np.sum(abs_, axis=0))
+    return spinor
