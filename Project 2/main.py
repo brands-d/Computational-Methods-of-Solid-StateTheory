@@ -2,59 +2,63 @@ import types
 import numpy as np
 import matplotlib.pyplot as plt
 from library import Spinor, DiracSolver
+import matplotlib.animation as animation
 
 np.set_printoptions(precision=3)
 
 # Settings
 L = 250
-t_end = 50
-m = 1
+t_end = 200
+m = 0.8
+V = 1
 
 
 def V(t, x, y):
-    values = np.zeros(x.shape)
-    values[x < 0.3] = 1
+    values = 3 * np.ones(x.shape)
+    values = x
     return values
 
 
 # Initial condition
 # Generate Gaussian Input for the real part of the u spinor component
-x, y = np.meshgrid(np.linspace(-1, 1, L), np.linspace(-1, 1, L - 1))
+x, y = np.meshgrid(np.linspace(-1, 1, L), np.linspace(1, -1, L - 1))
 d = np.sqrt(x ** 2 + y ** 2)
-mu, sigma = 0, 0.025
+mu, sigma = 0, 0.1
 
-u = np.exp(-((d - mu) ** 2 / (2.0 * sigma ** 2)), dtype=np.complex_)
-v = np.zeros(u.shape, dtype=np.complex_)
+u = np.exp(-((d - 0.3) ** 2 / (2.0 * sigma ** 2)), dtype=np.complex_)
+v = 1j*np.exp(-((d + 0.3) ** 2 / (2.0 * sigma ** 2)),
+           dtype=np.complex_)
 s_0 = Spinor(u, v, L)
 
 # Calculation
 ds = DiracSolver(s_0, m, V)
-s_t = ds.solve(t_end)
+save_points = [*list(range(t_end)), -1]
+s_t = ds.solve(t_end, saves_points=save_points)
 
-# Plot
-psi_t = abs(s_t)
-psi_0 = abs(s_0)
-v_min = np.amin([np.amin(psi_0), np.amin(psi_t)])
-v_max = np.amax([np.amax(psi_0), np.amax(psi_t)])
-fig, axs = plt.subplots(1, 2)
+# # Plot
+# fig, axs = plt.subplots(2, int(len(save_points) / 2))
+# for i, s in enumerate(s_t):
+#     axs.flatten()[i].imshow(abs(s[1]), extent=[-1, 1, 1, -1])
+#     axs.flatten()[i].set_title(r't = {:.3f}'.format(s[0]), fontsize=20)
+#     axs.flatten()[i].set(xlabel='x [arb. units]', ylabel='y [arb. units]')
+#
+# if not isinstance(m, types.FunctionType) and not isinstance(V,
+#                                                             types.FunctionType):
+#     plt.suptitle(r'$\left|\Psi\right|^2$; $m_z={:d}$; $\hat{{V}}={:d}$; '
+#                  r'$i\hbar c=1$'.format(m, V), fontsize=24)
+# else:
+#     plt.suptitle(r'$\left|\Psi\right|^2$; $i\hbar c=1$'.format(m, V),
+#                  fontsize=24)
+#
+# fig.canvas.set_window_title('Staggered Grid Solution of the Dirac Equation')
 
-axs[0].imshow(psi_0, extent=[-1, 1, -1, 1])
-axs[0].set_title(r't = {:d}'.format(0), fontsize=20)
-axs[0].set(xlabel='x [arb. units]', ylabel='y [arb. units]')
+ims = []
+for s in s_t:
+    im = plt.imshow(abs(s[1]), extent=[-1, 1, 1, -1], animated=True)
+    ims.append([im])
 
-im = axs[1].imshow(psi_t, extent=[-1, 1, -1, 1])
-axs[1].set_title(r't = {:d}'.format(t_end), fontsize=20)
-axs[1].set(xlabel='x [arb. units]', ylabel='y [arb. units]')
+fig = plt.figure()
+ani = animation.ArtistAnimation(fig, ims, interval=25,
+                                blit=True, repeat_delay=0)
 
-if not isinstance(m, types.FunctionType) and not isinstance(V,
-                                                            types.FunctionType):
-    plt.suptitle(r'$\left|\Psi\right|^2$; $m_z={:d}$; $\hat{{V}}={:d}$; '
-                 r'$i\hbar c=1$'.format(m, V), fontsize=24)
-else:
-    plt.suptitle(r'$\left|\Psi\right|^2$; $i\hbar c=1$'.format(m, V),
-                 fontsize=24)
-
-fig.canvas.set_window_title('Staggered Grid Solution of the Dirac Equation')
-
-#fig.colorbar(im, ax=axs.ravel().tolist())
 plt.show()

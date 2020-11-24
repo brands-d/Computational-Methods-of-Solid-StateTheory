@@ -1,6 +1,6 @@
 import time
 import types
-import copy
+from copy import deepcopy
 import numpy as np
 from scipy.interpolate import interpolate
 
@@ -105,21 +105,29 @@ class DiracSolver:
         self.k_u, self.k_v = self.get_factors(m, V, spinor.L)
 
     @timeit
-    def solve(self, t_end, delta=(1 / np.sqrt(2), 1, 1)):
-        u, v = copy.deepcopy(self.spinor)
+    def solve(self, t_end, delta=(1 / np.sqrt(2), 1, 1),
+              saves_points=[0, -1]):
+        spinor = deepcopy(self.spinor)
+        u, v = spinor
         dt, dx, dy = delta
         r = dt / np.array([dx, dy])
         time = np.arange(0, t_end, dt)
-
+        saves = []
         self.advance_u(u, v, self.n, self.k_u(0), -r / 2, -dt / 2)
 
-        for t in time:
+        for i, t in enumerate(time):
+            if i in saves_points:
+                saves.append([t, deepcopy(spinor)])
+
             self.advance_u(u, v, self.n, self.k_u(t), r, dt)
             self.advance_v(u, v, self.n, self.k_v(t + dt / 2), r, dt)
 
         self.advance_u(u, v, self.n, self.k_u(t_end), r / 2, dt / 2)
 
-        return Spinor(u, v)
+        if -1 in saves_points:
+            saves.append([t_end, deepcopy(spinor)])
+
+        return saves
 
     @classmethod
     def advance_u(cls, u, v, n, k, r, dt):
@@ -148,7 +156,7 @@ class DiracSolver:
     def get_factors(cls, m, V, L):
         ihc = 1j
         x, y = np.meshgrid(np.linspace(-1, 1, L),
-                           np.linspace(-1, 1, L - 1))
+                           np.linspace(1, -1, L - 1))
 
         if isinstance(m, types.FunctionType):
             if isinstance(V, types.FunctionType):
