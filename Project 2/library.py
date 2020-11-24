@@ -1,8 +1,8 @@
 import time
+import types
+import copy
 import numpy as np
 from scipy.interpolate import interpolate
-
-ihc = 1j
 
 
 def timeit(func):
@@ -32,17 +32,18 @@ class SpinorComponent:
     def __abs__(self):
         return np.real(self.x * np.conjugate(self.x))
 
-    def __rmul__(self, other):
+    def mul(self, other):
         self.x *= other
         return self
 
-    def __add__(self, other):
+    def add(self, other):
+        x = 1
         mask = np.invert(np.isnan(other))
         self.x[mask] += other[mask]
         return self
 
-    def __sub__(self, other):
-        self.__add__(-other)
+    def sub(self, other):
+        self.add(-other)
         return self
 
     def __repr__(self):
@@ -76,10 +77,15 @@ class SpinorComponent:
 
 class Spinor:
 
-    def __init__(self, u, v, L):
-        self.u = SpinorComponent(u, L)
-        self.v = SpinorComponent(v, L)
-        self.L = self.u.L
+    def __init__(self, u, v, L=None):
+        if L is None:
+            self.u = u
+            self.v = v
+            self.L = u.L
+        else:
+            self.u = SpinorComponent(u, L)
+            self.v = SpinorComponent(v, L)
+            self.L = L
 
     def __abs__(self):
         return abs(self.u) + abs(self.v)
@@ -91,36 +97,72 @@ class Spinor:
         return 'u:\n' + self.u.__repr__() + '\nv:\n' + self.v.__repr__()
 
 
-@timeit
-def dirac_solver(spinor, m, V, delta, t_end):
-    dt, dx, dy = delta
-    time = np.arange(0, t_end, dt)
-    u, v = spinor
-    f = [(1 / dt - (m + V) / ihc) ** (-1), 1 / dt + (m + V) / ihc,
-         (1 / dt - (V - m) / ihc) ** (-1), 1 / dt + (V - m) / ihc]
-    # Factor for half a time-step
-    f_2 = [(2 / dt - (m + V) / ihc) ** (-1), 2 / dt + (m + V) / ihc,
-           (2 / dt - (V - m) / ihc) ** (-1), 2 / dt + (V - m) / ihc]
-    n = SpinorComponent.get_all_neighbours(spinor.L).T
+class DiracSolver:
 
-    def advance_u(u, v, n, f):
-        up_down = (v[n[0]] - v[n[1]]) / dy
-        right_left = (v[n[3]] - v[n[2]]) * 1j / dx
-        u = f[0] * (f[1] * u - up_down - right_left)
-        return u
+    def __init__(self, spinor, m, V):
+        self.spinor = spinor
+        self.n = SpinorComponent.get_all_neighbours(spinor.L).T
+        self.k_u, self.k_v = self.get_factors(m, V, spinor.L)
 
-    def advance_v(u, v, n, f):
-        up_down = (u[n[0]] - u[n[1]]) / dy
-        right_left = (u[n[3]] - u[n[2]]) * 1j / dx
-        v = f[2] * (f[3] * v - up_down + right_left)
-        return v
+    @timeit
+    def solve(self, t_end, delta=(1 / np.sqrt(2), 1, 1)):
+        u, v = copy.deepcopy(self.spinor)
+        dt, dx, dy = delta
+        r = dt / np.array([dx, dy])
+        time = np.arange(0, t_end, dt)
 
-    advance_v(u, v, n, f_2)
+        self.advance_u(u, v, self.n, self.k_u(0), -r / 2, -dt / 2)
 
-    for _ in time:
-        advance_u(u, v, n, f)
-        advance_v(u, v, n, f)
+        for t in time:
+            self.advance_u(u, v, self.n, self.k_u(t), r, dt)
+            self.advance_v(u, v, self.n, self.k_v(t + dt / 2), r, dt)
 
-    advance_u(u, v, n, f_2)
+        self.advance_u(u, v, self.n, self.k_u(t_end), r / 2, dt / 2)
 
-    return spinor
+        return Spinor(u, v)
+
+    @classmethod
+    def advance_u(cls, u, v, n, k, r, dt):
+        u = u.mul(1 + k * dt / 2)
+        u = u.sub(cls.y_diff(v, n, r[1]))
+        u = u.sub(cls.x_diff(v, n, r[0]))
+        return u.mul((1 - k * dt / 2) ** (-1))
+
+    @classmethod
+    def advance_v(cls, u, v, n, k, r, dt):
+        v = v.mul((1 + k * dt / 2))
+        v = v.sub(cls.y_diff(u, n, r[1]))
+        v = v.add(cls.x_diff(u, n, r[0]))
+        return v.mul((1 - k * dt / 2) ** (-1))
+
+    @classmethod
+    def x_diff(cls, x, n, r):
+        return (x[n[3]] - x[n[2]]) * 1j * r
+
+    @classmethod
+    def y_diff(cls, x, n, r):
+
+        return (x[n[0]] - x[n[1]]) * r
+
+    @classmethod
+    def get_factors(cls, m, V, L):
+        ihc = 1j
+        x, y = np.meshgrid(np.linspace(-1, 1, L),
+                           np.linspace(-1, 1, L - 1))
+
+        if isinstance(m, types.FunctionType):
+            if isinstance(V, types.FunctionType):
+                k_u = lambda t: (m(t, x, y) + V(t, x, y)) / ihc
+                k_v = lambda t: (V(t, x, y) - m(t, x, y)) / ihc
+            else:
+                k_u = lambda t: (m(t, x, y) + V) / ihc
+                k_v = lambda t: (V - m(t, x, y)) / ihc
+        else:
+            if isinstance(V, types.FunctionType):
+                k_u = lambda t: (m + V(t, x, y)) / ihc
+                k_v = lambda t: (V(t, x, y) - m) / ihc
+            else:
+                k_u = lambda t: (m + V) / ihc
+                k_v = lambda t: (V - m) / ihc
+
+        return k_u, k_v
